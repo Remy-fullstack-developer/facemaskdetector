@@ -1,0 +1,781 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Face Mask Detection Pro</title>
+<!--
+=====================================================================
+ FACE MASK DETECTION PRO  –  HCI Advanced Interaction, Project 2
+ Single file (HTML + CSS + JavaScript). Open in Chrome with internet
+ (CDN libraries) and allow the camera. Nothing is uploaded anywhere.
+
+ PIPELINE
+   camera → BlazeFace (finds every face) → crop each face →
+   MobileNet features + KNN classifier (trained by YOU in the browser)
+   OR a Google Teachable Machine model → smoothing per tracked face →
+   message / gate / voice / log / statistics.
+
+ CLASSES:  mask · nomask · wrong (mask worn incorrectly – optional)
+=====================================================================
+-->
+<style>
+  :root{
+    --bg:#0a1215; --panel:#111c20; --panel2:#0d171a; --line:#21343a; --text:#e6f1f2; --muted:#8aa3a8;
+    --teal:#14b8a6; --ok:#22c55e; --bad:#ef4444; --warn:#f59e0b; --idle:#64748b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,Segoe UI,Roboto,sans-serif;line-height:1.45}
+  header{padding:14px 22px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  header h1{font-size:1.2rem;margin:0}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--teal);box-shadow:0 0 10px var(--teal)}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto}
+  .chip{font-size:.78rem;padding:4px 10px;border-radius:999px;border:1px solid var(--line);background:var(--panel2);color:var(--muted)}
+  .chip b{color:var(--text)}
+  .chip.open{border-color:var(--ok);color:#bbf7d0} .chip.locked{border-color:var(--bad);color:#fecaca}
+  .chip.checking{border-color:var(--warn);color:#fde68a}
+  main{display:grid;grid-template-columns:minmax(320px,1.25fr) minmax(320px,1fr);gap:18px;padding:18px 22px;max-width:1280px;margin:auto}
+  @media(max-width:900px){main{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}
+  .card h2{margin:0 0 10px;font-size:.95rem;color:var(--teal);letter-spacing:.02em}
+  .stage{position:relative;border-radius:12px;overflow:hidden;background:#000;aspect-ratio:4/3;border:4px solid var(--line);transition:border-color .25s,box-shadow .25s}
+  .stage.mask{border-color:var(--ok);box-shadow:0 0 22px rgba(34,197,94,.35)}
+  .stage.nomask{border-color:var(--bad);box-shadow:0 0 22px rgba(239,68,68,.4)}
+  .stage.wrong,.stage.unsure{border-color:var(--warn)}
+  #view{width:100%;height:100%;display:block;object-fit:cover;background:#000}
+  #placeholder{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;color:var(--muted);padding:24px}
+  #rec{position:absolute;top:10px;left:12px;background:rgba(239,68,68,.9);color:#fff;font-weight:700;font-size:.8rem;padding:3px 10px;border-radius:999px;display:none}
+  button,select{font:inherit}
+  button{background:var(--teal);color:#042220;border:0;border-radius:9px;padding:9px 13px;font-weight:700;cursor:pointer;font-size:.86rem}
+  button.ghost{background:transparent;color:var(--text);border:1px solid var(--line)}
+  button.danger{background:transparent;color:#fecaca;border:1px solid #7f1d1d}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  button:hover:not(:disabled){filter:brightness(1.1)}
+  select,input[type=text]{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:9px;padding:8px;width:100%}
+  .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center}
+  .msg{margin-top:10px;border-radius:12px;padding:12px 14px;font-size:1.02rem;font-weight:650;border:1px solid var(--line);min-height:54px}
+  .msg.mask{background:rgba(34,197,94,.12);border-color:var(--ok);color:#bbf7d0}
+  .msg.nomask{background:rgba(239,68,68,.12);border-color:var(--bad);color:#fecaca}
+  .msg.wrong,.msg.unsure{background:rgba(245,158,11,.12);border-color:var(--warn);color:#fde68a}
+  .msg.idle{background:var(--panel2);color:var(--muted)}
+  .hintline{font-size:.82rem;color:var(--warn);min-height:20px;margin-top:6px}
+  .bar{margin:7px 0}
+  .bar label{display:flex;justify-content:space-between;font-size:.82rem;color:var(--muted)}
+  .track{height:10px;background:#081012;border-radius:8px;overflow:hidden;border:1px solid var(--line)}
+  .fill{height:100%;width:0;transition:width .15s}
+  .tabs{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+  .tab{flex:1;min-width:84px}
+  .tab.active{background:var(--teal);color:#042220;border-color:var(--teal)}
+  .pane{display:none}.pane.active{display:block}
+  .hint{font-size:.8rem;color:var(--muted)}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  @media(max-width:520px){.grid3{grid-template-columns:1fr}}
+  .cls{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:8px}
+  .cls .count{font-variant-numeric:tabular-nums;font-size:.8rem;color:var(--muted);margin:4px 0}
+  .cls button{width:100%;margin-top:5px;font-size:.78rem;padding:7px 6px}
+  .thumbs{display:flex;gap:3px;flex-wrap:wrap;min-height:28px}
+  .thumbs canvas{width:28px;height:28px;border-radius:4px;border:1px solid var(--line)}
+  .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  @media(max-width:520px){.tiles{grid-template-columns:repeat(2,1fr)}}
+  .tile{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center}
+  .tile b{display:block;font-size:1.5rem}
+  .tile span{font-size:.75rem;color:var(--muted)}
+  .log{max-height:170px;overflow:auto;font-size:.78rem;border:1px solid var(--line);border-radius:8px;margin-top:10px}
+  .log div{padding:4px 8px;border-bottom:1px solid var(--line);color:var(--muted)}
+  .log .s-mask b{color:var(--ok)} .log .s-nomask b{color:var(--bad)} .log .s-wrong b{color:var(--warn)}
+  .gallery{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .gallery figure{margin:0;width:92px;font-size:.68rem;color:var(--muted)}
+  .gallery img{width:92px;height:69px;object-fit:cover;border-radius:6px;border:1px solid var(--bad)}
+  .setting{margin:10px 0}
+  .setting label{font-size:.85rem;display:block;margin-bottom:3px}
+  input[type=range]{width:100%;accent-color:var(--teal)}
+  #status{font-size:.82rem;color:var(--muted);margin-top:10px}
+  #toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:#0b2a2d;border:1px solid var(--teal);color:var(--text);
+    padding:10px 16px;border-radius:10px;font-size:.88rem;opacity:0;pointer-events:none;transition:opacity .25s;z-index:20;max-width:90vw;text-align:center}
+  #toast.show{opacity:1}
+  ul.hci{padding-left:18px;margin:6px 0 0;font-size:.8rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<header>
+  <div class="dot"></div>
+  <h1>Face Mask Detection <span style="color:var(--teal)">Pro</span></h1>
+  <div class="chips">
+    <span class="chip">Model: <b id="chipModel">loading…</b></span>
+    <span class="chip">FPS: <b id="chipFps">0</b></span>
+    <span class="chip">Faces: <b id="chipFaces">0</b></span>
+    <span class="chip idle" id="chipGate">Gate: <b>idle</b></span>
+  </div>
+</header>
+
+<main>
+  <!-- ============ LEFT: camera ============ -->
+  <section class="card">
+    <h2>LIVE CAMERA</h2>
+    <div class="stage" id="stage">
+      <canvas id="view" width="640" height="480"></canvas>
+      <div id="placeholder">Camera is off.<br>Press “Start camera”. Video is processed on your device only.</div>
+      <div id="rec">● REC</div>
+    </div>
+    <div class="row">
+      <button id="btnCam">Start camera</button>
+      <button id="btnStop" class="ghost" disabled>Stop</button>
+      <button id="btnDetect" disabled>▶ Start detection</button>
+      <button id="btnSnap" class="ghost" disabled>📸 Snapshot</button>
+      <button id="btnFull" class="ghost">⛶ Fullscreen</button>
+    </div>
+    <div class="row"><select id="camSel" title="Camera"><option value="">Default camera</option></select></div>
+
+    <div class="msg idle" id="message">Start the camera, then train or load a model.</div>
+    <div class="hintline" id="hintline"></div>
+
+    <div class="bar"><label><span>😷 Mask</span><span id="pMask">0%</span></label><div class="track"><div class="fill" id="fMask" style="background:var(--ok)"></div></div></div>
+    <div class="bar"><label><span>🙂 No mask</span><span id="pNo">0%</span></label><div class="track"><div class="fill" id="fNo" style="background:var(--bad)"></div></div></div>
+    <div class="bar"><label><span>😶 Worn incorrectly</span><span id="pWrong">0%</span></label><div class="track"><div class="fill" id="fWrong" style="background:var(--warn)"></div></div></div>
+    <p class="hint">Shortcuts: <b>Space</b> start/pause detection · <b>S</b> snapshot · <b>F</b> fullscreen</p>
+  </section>
+
+  <!-- ============ RIGHT: tabs ============ -->
+  <section class="card">
+    <div class="tabs">
+      <button class="tab active" data-pane="train">Train</button>
+      <button class="tab ghost" data-pane="tm">Teachable Machine</button>
+      <button class="tab ghost" data-pane="dash">Dashboard</button>
+      <button class="tab ghost" data-pane="set">Settings</button>
+    </div>
+
+    <!-- TRAIN -->
+    <div class="pane active" id="pane-train">
+      <div class="row" style="margin-top:0">
+        <button id="btnWizard">⚡ Quick setup – guided capture</button>
+        <label class="hint"><input type="checkbox" id="wizWrong"> include “incorrect mask” step</label>
+      </div>
+      <p class="hint">Quick setup films you for ~15 s without a mask, then ~15 s with a mask, trains the model and starts detection.</p>
+      <p class="hint" style="margin-top:0">Face must be visible (a box appears). <b>Hold</b> a button or press <b>Auto-record</b> (3 s countdown, then 5 s).
+        Move your head, change distance and light. Aim for <b>50+ samples per class</b>, with different masks and people.
+        The third class is optional – only record it if you want “mask under the nose / on the chin” warnings.</p>
+      <div class="grid3">
+        <div class="cls"><b>😷 Mask</b><div class="count" id="cMask">0 samples</div><div class="thumbs" id="tMask"></div>
+          <button id="hMask">Hold: add</button><button class="ghost" id="aMask" data-label="🎬 Auto-record">🎬 Auto-record</button><button class="ghost" id="phMask">🖼 Add photos</button><button class="danger" id="xMask">Clear</button></div>
+        <div class="cls"><b>🙂 No mask</b><div class="count" id="cNo">0 samples</div><div class="thumbs" id="tNo"></div>
+          <button id="hNo">Hold: add</button><button class="ghost" id="aNo" data-label="🎬 Auto-record">🎬 Auto-record</button><button class="ghost" id="phNo">🖼 Add photos</button><button class="danger" id="xNo">Clear</button></div>
+        <div class="cls"><b>😶 Incorrect</b><div class="count" id="cWrong">0 samples</div><div class="thumbs" id="tWrong"></div>
+          <button id="hWrong">Hold: add</button><button class="ghost" id="aWrong" data-label="🎬 Auto-record">🎬 Auto-record</button><button class="ghost" id="phWrong">🖼 Add photos</button><button class="danger" id="xWrong">Clear</button></div>
+      </div>
+      <div class="row">
+        <label class="hint"><input type="checkbox" id="augment" checked> Mirror augmentation (2× samples)</label>
+      </div>
+      <div class="row">
+        <button class="ghost" id="btnSave">💾 Save in browser</button>
+        <button class="ghost" id="btnLoad">📂 Load saved</button>
+        <button class="ghost" id="btnExport">⬇ Export file</button>
+        <button class="ghost" id="btnImport">⬆ Import file</button>
+        <input type="file" id="fileImport" accept=".json" style="display:none">
+        <input type="file" id="photoIn" accept="image/*" multiple style="display:none">
+      </div>
+    </div>
+
+    <!-- TEACHABLE MACHINE -->
+    <div class="pane" id="pane-tm">
+      <p class="hint" style="margin-top:0">At teachablemachine.withgoogle.com create an <b>Image Project</b> with classes
+        <b>Mask</b> and <b>No Mask</b> (optional: <b>Incorrect Mask</b>), train, <i>Export Model → Upload</i>, and paste the shared link.
+        The model is applied to each detected face.</p>
+      <input type="text" id="tmUrl" placeholder="https://teachablemachine.withgoogle.com/models/XXXXXXX/">
+      <div class="row"><button id="btnTM">Load Teachable Machine model</button></div>
+      <div class="setting"><label>Active model</label>
+        <select id="source"><option value="knn">Trained in this browser</option><option value="tm">Teachable Machine</option></select></div>
+    </div>
+
+    <!-- DASHBOARD -->
+    <div class="pane" id="pane-dash">
+      <div class="tiles">
+        <div class="tile"><b id="sMask" style="color:var(--ok)">0</b><span>Masked</span></div>
+        <div class="tile"><b id="sNo" style="color:var(--bad)">0</b><span>No mask</span></div>
+        <div class="tile"><b id="sWrong" style="color:var(--warn)">0</b><span>Incorrect</span></div>
+        <div class="tile"><b id="sRate">–</b><span>Compliance</span></div>
+      </div>
+      <div class="row"><span class="hint">Session: <b id="sTime">00:00</b></span>
+        <button class="ghost" id="btnCsv">⬇ Export log (CSV)</button><button class="danger" id="btnClearStats">Reset stats</button></div>
+      <div class="log" id="log"></div>
+      <h2 style="margin-top:14px">VIOLATION SNAPSHOTS</h2>
+      <p class="hint" style="margin:0">Only if “auto-capture” is on in Settings. Kept in memory only – gone when you close or reload the page.</p>
+      <div class="gallery" id="gallery"></div>
+    </div>
+
+    <!-- SETTINGS -->
+    <div class="pane" id="pane-set">
+      <div class="setting"><label>Confidence threshold: <b id="thVal">75</b>% (below → “not sure”)</label>
+        <input type="range" id="threshold" min="50" max="95" value="75"></div>
+      <div class="setting"><label>Feature extractor</label>
+        <select id="featMode">
+          <option value="pixels">Lite – instant, works offline (train in the light you will use)</option>
+          <option value="mobilenet">MobileNet – more robust (needs a download)</option>
+        </select>
+        <div class="hint" id="featHint">MobileNet: waiting…</div></div>
+      <div class="setting"><label>Input mode</label>
+        <select id="inputMode">
+          <option value="face">Face crop (recommended – detects faces first)</option>
+          <option value="frame">Whole frame (use if the face detector misses masked faces)</option>
+        </select>
+        <div class="hint">Record training samples and run detection in the <b>same</b> mode.</div></div>
+      <div class="setting"><label><input type="checkbox" id="sound"> Beep when no mask is detected</label></div>
+      <div class="setting"><label><input type="checkbox" id="voice"> Voice announcements (“Please wear a mask”)</label></div>
+      <div class="setting"><label><input type="checkbox" id="autocap"> Auto-capture snapshot on violation</label></div>
+      <h2 style="margin-top:16px">HCI NOTES</h2>
+      <ul class="hci">
+        <li><b>Accuracy:</b> varied samples (people, masks, angles, glasses) → better results.</li>
+        <li><b>Lighting:</b> app warns when the face is too dark; train in the light you will use.</li>
+        <li><b>Feedback:</b> colour border + text + gate status + optional voice/beep; confidence bars.</li>
+        <li><b>Uncertainty:</b> low confidence shows “not sure” instead of a wrong decision; results are smoothed over time to avoid flicker.</li>
+        <li><b>Privacy:</b> processing is local; frames are not stored or sent. Camera can be stopped any time.</li>
+      </ul>
+    </div>
+
+    <div id="status">Loading libraries…</div>
+  </section>
+</main>
+<div id="toast"></div>
+
+<!-- Libraries -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/blazeface@0.0.7/dist/blazeface.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.0/dist/mobilenet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/knn-classifier@1.2.4/dist/knn-classifier.min.js"></script>
+
+<script>
+'use strict';
+/* =========================== helpers & state =========================== */
+const $ = id => document.getElementById(id);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const KEYS = ['mask', 'nomask', 'wrong'];
+const NAMES  = { mask:'MASK', nomask:'NO MASK', wrong:'INCORRECT', unsure:'…', idle:'FACE' };
+const COLORS = { mask:'#22c55e', nomask:'#ef4444', wrong:'#f59e0b', unsure:'#f59e0b', idle:'#e2e8f0' };
+
+const view = $('view'), ctx = view.getContext('2d');
+const stage = $('stage'), message = $('message');
+const video = document.createElement('video');            // hidden source video
+video.playsInline = true; video.muted = true;
+video.style.cssText = 'position:absolute;width:1px;height:1px;opacity:0;pointer-events:none';
+document.body.appendChild(video);
+
+function mkCanvas(){ const c = document.createElement('canvas'); c.width = c.height = 224;
+  c.getContext('2d', { willReadFrequently:true }); return c; }
+const cropA = mkCanvas();   // used by the detection loop
+const cropB = mkCanvas();   // used when recording training samples
+
+const S = {
+  stream:null, detector:null, net:null, knn:null, tm:null,
+  running:false, loopOn:false, rendering:false, recording:false,
+  frameW:640, frameH:480, tracks:[], nextId:1, faceNow:null,
+  stats:{ mask:0, nomask:0, wrong:0 }, log:[], t0:Date.now(),
+  gateSince:0, lastVoice:0, lastBeep:0, fps:0,
+  feat:'pixels', photoLabel:'mask', autoLoaded:false
+};
+
+function toast(t, ms = 2600){ const el = $('toast'); el.textContent = t; el.classList.add('show');
+  clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('show'), ms); }
+function setStatus(t){ $('status').textContent = t; }
+
+/* =========================== start-up =========================== */
+/* The app is usable immediately (Lite mode). The heavy MobileNet model downloads in the background and
+   is only used when it arrives – a slow/blocked network can no longer freeze the whole page. */
+function withTimeout(p, ms, name){
+  return Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(name + ' timed out')), ms))]);
+}
+(async function init(){
+  try{
+    S.knn = knnClassifier.create();
+    $('chipModel').textContent = 'needs training';
+    setStatus('Loading face detector…');
+    try{ S.detector = await withTimeout(blazeface.load({ maxFaces:5, scoreThreshold:0.7 }), 40000, 'BlazeFace'); }
+    catch(e){ console.warn(e); S.detector = null;
+      $('inputMode').value = 'frame'; toast('Face detector could not download – using whole-frame mode (centre square).', 5000); }
+    setStatus('Ready ✔ Start the camera, then press “⚡ Quick setup” (or record samples yourself).');
+    tryAutoLoad();
+    loadMobilenet();                       // background, optional
+  }catch(e){ console.error(e); setStatus('Could not load libraries – check your internet connection.'); }
+})();
+
+/* =========================== camera =========================== */
+async function startCamera(){
+  try{
+    stopStream();
+    const c = { video:{ width:{ ideal:640 }, height:{ ideal:480 } }, audio:false };
+    const id = $('camSel').value;
+    if(id) c.video.deviceId = { exact:id }; else c.video.facingMode = 'user';
+    S.stream = await navigator.mediaDevices.getUserMedia(c);
+    video.srcObject = S.stream; await video.play();
+    S.frameW = view.width = video.videoWidth || 640;
+    S.frameH = view.height = video.videoHeight || 480;
+    $('placeholder').style.display = 'none';
+    $('btnCam').disabled = true; $('btnStop').disabled = false;
+    $('btnDetect').disabled = false; $('btnSnap').disabled = false;
+    fillCameras();
+    if(!S.rendering){ S.rendering = true; render(); }
+    if(!S.loopOn){ S.loopOn = true; inferLoop(); }
+    addLog('info', 'Camera started');
+  }catch(e){
+    console.error(e);
+    msg('unsure', 'Camera blocked or not found. Allow camera permission in Chrome (use localhost/https or open the file directly).');
+  }
+}
+function stopStream(){ if(S.stream){ S.stream.getTracks().forEach(t => t.stop()); S.stream = null; } }
+function stopCamera(){
+  stopStream(); S.running = false; S.tracks = []; S.faceNow = null;
+  video.srcObject = null; $('placeholder').style.display = 'flex';
+  $('btnCam').disabled = false; $('btnStop').disabled = true; $('btnDetect').disabled = true; $('btnSnap').disabled = true;
+  $('btnDetect').textContent = '▶ Start detection'; stage.className = 'stage';
+  msg('idle', 'Camera stopped. No frames were kept.'); setGate('idle'); $('chipFaces').textContent = '0';
+  ctx.clearRect(0, 0, view.width, view.height);
+}
+async function fillCameras(){
+  try{
+    const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+    const sel = $('camSel'), cur = sel.value; sel.innerHTML = '<option value="">Default camera</option>';
+    devs.forEach((d, i) => { const o = document.createElement('option'); o.value = d.deviceId; o.textContent = d.label || ('Camera ' + (i + 1)); sel.appendChild(o); });
+    sel.value = cur;
+  }catch(e){}
+}
+$('btnCam').onclick = startCamera; $('btnStop').onclick = stopCamera;
+$('camSel').onchange = () => { if(S.stream) startCamera(); };
+$('btnFull').onclick = () => { if(document.fullscreenElement) document.exitFullscreen(); else stage.requestFullscreen && stage.requestFullscreen(); };
+$('btnSnap').onclick = snapshot;
+function snapshot(){
+  if(!S.stream) return;
+  view.toBlob(b => { const a = document.createElement('a'); a.href = URL.createObjectURL(b);
+    a.download = 'mask-snapshot-' + new Date().toISOString().replace(/[:.]/g, '-') + '.png'; a.click(); URL.revokeObjectURL(a.href); });
+}
+
+/* =========================== tabs =========================== */
+document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x => { x.classList.remove('active'); x.classList.add('ghost'); });
+  b.classList.add('active'); b.classList.remove('ghost');
+  document.querySelectorAll('.pane').forEach(p => p.classList.remove('active'));
+  $('pane-' + b.dataset.pane).classList.add('active');
+});
+
+/* =========================== face finding & cropping =========================== */
+async function getFaces(){
+  const W = S.frameW, H = S.frameH;
+  if($('inputMode').value === 'frame' || !S.detector){
+    const size = Math.min(W, H);                          // central square acts as one "face"
+    return [{ topLeft:[(W - size) / 2, 0], bottomRight:[(W + size) / 2, size], exact:true }];
+  }
+  const found = await S.detector.estimateFaces(video, false);
+  return found.map(f => ({ topLeft:Array.from(f.topLeft), bottomRight:Array.from(f.bottomRight) }));
+}
+function cropFace(f, target, flip, src = video){
+  const [x1, y1] = f.topLeft, [x2, y2] = f.bottomRight;
+  let size = Math.max(x2 - x1, y2 - y1); if(!f.exact) size *= 1.4;          // include chin/mask area
+  const sx = (x1 + x2) / 2 - size / 2, sy = (y1 + y2) / 2 - size / 2 + (f.exact ? 0 : size * 0.06);
+  const c = target.getContext('2d');
+  c.save(); c.fillStyle = '#000'; c.fillRect(0, 0, 224, 224);
+  if(flip){ c.translate(224, 0); c.scale(-1, 1); }
+  c.drawImage(src, sx, sy, size, size, 0, 0, 224, 224);
+  c.restore();
+  return target;
+}
+function brightness(cv){
+  const d = cv.getContext('2d').getImageData(0, 0, 224, 224).data; let s = 0, n = 0;
+  for(let i = 0; i < d.length; i += 64){ s += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]; n++; }
+  return s / n;
+}
+
+/* =========================== classification =========================== */
+function counts(){ const c = S.knn ? S.knn.getClassExampleCount() : {}; return { mask:c.mask || 0, nomask:c.nomask || 0, wrong:c.wrong || 0 }; }
+function modelReady(){
+  if($('source').value === 'tm') return !!S.tm;
+  const c = counts(); return c.mask >= 10 && c.nomask >= 10;
+}
+function mapLabel(name){
+  const n = name.toLowerCase();
+  if(/incorrect|improper|wrong|chin|nose/.test(n)) return 'wrong';
+  if(/\bno\b|without|nomask|no_mask|not|unmask/.test(n)) return 'nomask';
+  if(n.includes('mask')) return 'mask';
+  return null;
+}
+async function classify(canvas){
+  const out = { mask:0, nomask:0, wrong:0 };
+  if($('source').value === 'tm' && S.tm){
+    const size = S.tm.size;
+    const x = tf.tidy(() => { let im = tf.browser.fromPixels(canvas).toFloat();
+      if(size !== 224) im = tf.image.resizeBilinear(im, [size, size]);
+      return im.div(127.5).sub(1).expandDims(0); });
+    const y = S.tm.model.predict(x); const p = await y.data(); x.dispose(); y.dispose();
+    S.tm.labels.forEach((l, i) => { const k = mapLabel(l); if(k) out[k] = Math.max(out[k], p[i]); });
+  } else {
+    const feat = tf.tidy(() => features(canvas));
+    const r = await S.knn.predictClass(feat, 5); feat.dispose();
+    KEYS.forEach(k => out[k] = (r.confidences && r.confidences[k]) || 0);
+  }
+  return out;
+}
+
+/* =========================== main inference loop =========================== */
+async function inferLoop(){
+  if(!S.loopOn) return;
+  const t0 = performance.now();
+  if(S.stream && video.readyState >= 2 && S.knn){
+    try{ await step(); }catch(e){ console.error(e); }
+    const dt = performance.now() - t0; S.fps = S.fps * 0.8 + (1000 / Math.max(dt, 1)) * 0.2;
+    $('chipFps').textContent = S.fps.toFixed(0);
+  }
+  setTimeout(inferLoop, 25);
+}
+async function step(){
+  const now = performance.now();
+  const faces = await getFaces();
+  const classifying = S.running && modelReady();
+  const dets = []; let big = null, bigA = 0;
+  for(const f of faces){
+    const w = f.bottomRight[0] - f.topLeft[0], h = f.bottomRight[1] - f.topLeft[1];
+    if(w * h > bigA){ bigA = w * h; big = f; }
+    let probs = null, bright = null;
+    if(classifying){ cropFace(f, cropA, false); bright = brightness(cropA); probs = await classify(cropA); }
+    dets.push({ cx:f.topLeft[0] + w / 2, cy:f.topLeft[1] + h / 2, x:f.topLeft[0], y:f.topLeft[1], w, h, probs, bright });
+  }
+  S.faceNow = big ? { f:big, t:now } : null;           // used by the training buttons
+  updateTracks(dets, now);
+  updateOverall(now, classifying);
+}
+
+/* ---- smoothing, hysteresis and tracking of each face ---- */
+function decide(p, th){
+  let best = 'unsure', bp = 0;
+  KEYS.forEach(k => { if(p[k] > bp){ bp = p[k]; best = k; } });
+  return { state: bp >= th ? best : 'unsure', conf: bp };
+}
+function updateTracks(dets, now){
+  const th = $('threshold').value / 100, used = new Set();
+  for(const d of dets){
+    let best = null, bd = Infinity;
+    for(const t of S.tracks){ if(used.has(t)) continue; const dist = Math.hypot(t.cx - d.cx, t.cy - d.cy); if(dist < bd){ bd = dist; best = t; } }
+    let t;
+    if(best && bd < S.frameW * 0.25){
+      t = best;
+      if(d.probs){ const a = 0.4; KEYS.forEach(k => t.p[k] = t.p[k] * (1 - a) + d.probs[k] * a); }
+    } else {
+      t = { id:S.nextId++, p:d.probs ? { ...d.probs } : { mask:0, nomask:0, wrong:0 }, state:'idle', cand:'idle', candN:0, stableSince:now, conf:0 };
+      S.tracks.push(t);
+    }
+    used.add(t);
+    Object.assign(t, { cx:d.cx, cy:d.cy, x:d.x, y:d.y, w:d.w, h:d.h, seen:now, bright:d.bright });
+    if(!d.probs){ t.state = 'idle'; t.cand = 'idle'; t.candN = 0; continue; }
+    const dec = decide(t.p, th); t.conf = dec.conf;
+    if(dec.state === t.cand) t.candN++; else { t.cand = dec.state; t.candN = 1; }
+    if(t.candN >= 3 && t.state !== t.cand){ t.state = t.cand; t.stableSince = now; onStateChange(t); }
+  }
+  S.tracks = S.tracks.filter(t => now - t.seen < 1500);
+}
+
+/* ---- what happens when a face's state becomes stable ---- */
+function onStateChange(t){
+  if(!KEYS.includes(t.state)) return;
+  S.stats[t.state]++; addLog(t.state, `Face #${t.id}  ${Math.round(t.conf * 100)}%`); refreshStats();
+  if(t.state === 'nomask' || t.state === 'wrong'){
+    if($('sound').checked) beep();
+    if($('autocap').checked) addViolation(t.state);
+  }
+}
+
+/* ---- overall message, gate, hints, bars ---- */
+function updateOverall(now, classifying){
+  const act = S.tracks.filter(t => now - t.seen < 500);
+  $('chipFaces').textContent = act.length;
+  if(!S.running){ stage.className = 'stage'; if(act.length) hint(''); return; }
+  if(!modelReady()){ msg('unsure', 'Model not ready – record at least 10 samples of Mask and No mask (or load a Teachable Machine model).'); return; }
+  let cls = 'unsure', text = '🤔 Not sure – face the camera in good light', gate = 'checking';
+  if(!act.length){ cls = 'idle'; text = '👀 No face detected – step in front of the camera'; gate = 'idle'; }
+  else if(act.some(t => t.state === 'nomask')){ cls = 'nomask'; text = '⚠️ No mask detected – please wear a face mask.'; gate = 'locked'; }
+  else if(act.some(t => t.state === 'wrong')){ cls = 'wrong'; text = '😶 Mask worn incorrectly – cover your nose and mouth.'; gate = 'locked'; }
+  else if(act.every(t => t.state === 'mask')){
+    cls = 'mask'; text = act.length > 1 ? '✅ Everyone is wearing a mask – you may enter.' : '✅ Thank you! Mask detected – you may enter.';
+    const since = Math.max(...act.map(t => t.stableSince)); gate = (now - since > 800) ? 'open' : 'checking';
+  }
+  msg(cls, text); stage.className = 'stage ' + (cls === 'idle' ? '' : cls); setGate(gate);
+
+  // quality hints (HCI: tell the user how to improve accuracy)
+  const main = act.slice().sort((a, b) => b.w * b.h - a.w * a.h)[0];
+  if(main){
+    if(main.w / S.frameW < 0.12) hint('📏 Move closer to the camera.');
+    else if(main.bright != null && main.bright < 55) hint('💡 Too dark – add more light for accurate results.');
+    else hint('');
+    $('pMask').textContent = Math.round(main.p.mask * 100) + '%';   $('fMask').style.width = main.p.mask * 100 + '%';
+    $('pNo').textContent = Math.round(main.p.nomask * 100) + '%';   $('fNo').style.width = main.p.nomask * 100 + '%';
+    $('pWrong').textContent = Math.round(main.p.wrong * 100) + '%'; $('fWrong').style.width = main.p.wrong * 100 + '%';
+  }
+  if((cls === 'nomask' || cls === 'wrong') && $('voice').checked && now - S.lastVoice > 7000){
+    S.lastVoice = now; speak(cls === 'nomask' ? 'Please wear a face mask.' : 'Please cover your nose and mouth.');
+  }
+}
+function msg(cls, text){ message.className = 'msg ' + cls; message.textContent = text; }
+function hint(t){ $('hintline').textContent = t; }
+function setGate(g){ const c = $('chipGate'); c.className = 'chip ' + g; c.innerHTML = 'Gate: <b>' + ({ open:'OPEN', locked:'LOCKED', checking:'checking…', idle:'idle' }[g]) + '</b>'; }
+function speak(t){ try{ speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(t)); }catch(e){} }
+let audioCtx = null;
+function beep(){
+  const now = performance.now(); if(now - S.lastBeep < 2500) return; S.lastBeep = now;
+  try{ audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain(); o.frequency.value = 660; g.gain.value = .08;
+    o.connect(g); g.connect(audioCtx.destination); o.start(); o.stop(audioCtx.currentTime + .25); }catch(e){}
+}
+
+/* =========================== drawing =========================== */
+function render(){
+  requestAnimationFrame(render);
+  if(!S.stream || video.readyState < 2) return;
+  const W = view.width, H = view.height, now = performance.now();
+  ctx.save(); ctx.translate(W, 0); ctx.scale(-1, 1); ctx.drawImage(video, 0, 0, W, H); ctx.restore();   // mirror view
+  const lw = Math.max(3, W / 200); ctx.lineWidth = lw; ctx.font = `bold ${Math.round(W / 34)}px system-ui,sans-serif`;
+  for(const t of S.tracks){
+    if(now - t.seen > 500) continue;
+    const col = COLORS[t.state] || COLORS.idle, bx = W - (t.x + t.w), by = t.y;
+    ctx.strokeStyle = col; ctx.strokeRect(bx, by, t.w, t.h);
+    const label = t.state === 'idle' ? 'Face' : (NAMES[t.state] + (t.state === 'unsure' ? '' : ' ' + Math.round(t.conf * 100) + '%'));
+    const tw = ctx.measureText(label).width + 12, th = Math.round(W / 34) + 10, ly = Math.max(0, by - th);
+    ctx.fillStyle = col; ctx.fillRect(bx, ly, tw, th);
+    ctx.fillStyle = '#04201d'; ctx.fillText(label, bx + 6, ly + th - 8);
+  }
+  $('rec').style.display = S.recording ? 'block' : 'none';
+}
+
+/* =========================== training =========================== */
+function captureOnce(label){
+  const fn = S.faceNow;
+  if(!fn || performance.now() - fn.t > 1000 || !S.knn) return false;
+  const flips = $('augment').checked ? [false, true] : [false];
+  for(const fl of flips){ cropFace(fn.f, cropB, fl); tf.tidy(() => S.knn.addExample(features(cropB), label)); }
+  addThumb(label); return true;
+}
+const THUMB = { mask:'tMask', nomask:'tNo', wrong:'tWrong' }, CNT = { mask:'cMask', nomask:'cNo', wrong:'cWrong' };
+function addThumb(label){
+  const box = $(THUMB[label]); const c = document.createElement('canvas'); c.width = c.height = 28;
+  c.getContext('2d').drawImage(cropB, 0, 0, 28, 28); box.appendChild(c); while(box.children.length > 10) box.removeChild(box.firstChild);
+}
+function refreshCounts(){
+  const c = counts(); KEYS.forEach(k => $(CNT[k]).textContent = c[k] + ' samples');
+  $('chipModel').textContent = modelReady() ? ($('source').value === 'tm' ? 'Teachable Machine' : 'trained ✔') : 'needs training';
+}
+function holdToAdd(btnId, label){
+  const btn = $(btnId); let timer = null, warned = false;
+  const add = () => { if(!captureOnce(label)){ if(!warned){ toast('No face visible – look at the camera (a box should appear).'); warned = true; } } else refreshCounts(); };
+  const start = e => { e.preventDefault(); warned = false; add(); timer = setInterval(add, 100); };
+  const stop = () => { clearInterval(timer); timer = null; };
+  ['mousedown', 'touchstart'].forEach(ev => btn.addEventListener(ev, start));
+  ['mouseup', 'mouseleave', 'touchend', 'touchcancel'].forEach(ev => btn.addEventListener(ev, stop));
+}
+async function autoRecord(label, btn){
+  if(S.recording) return;
+  if(!S.stream){ toast('Start the camera first.'); return; }
+  S.recording = true; const orig = btn.dataset.label;
+  for(let i = 3; i > 0; i--){ btn.textContent = 'Get ready… ' + i; await sleep(1000); }
+  const total = 50, jitter = 100; let ok = 0;
+  for(let i = 0; i < total; i++){ btn.textContent = '● ' + Math.round(i / total * 100) + '%'; if(captureOnce(label)) ok++; refreshCounts(); await sleep(jitter); }
+  btn.textContent = orig; S.recording = false;
+  toast(ok > total * .6 ? `Recorded ${ok} frames ✔ – move your head a bit and record again for more variety.` : 'Many frames had no face – improve light and stay in view.');
+}
+[['mask', 'hMask', 'aMask', 'xMask'], ['nomask', 'hNo', 'aNo', 'xNo'], ['wrong', 'hWrong', 'aWrong', 'xWrong']].forEach(([label, h, a, x]) => {
+  holdToAdd(h, label);
+  $(a).onclick = () => autoRecord(label, $(a));
+  $(x).onclick = () => { try{ S.knn.clearClass(label); }catch(e){} $(THUMB[label]).innerHTML = ''; refreshCounts(); toast('Cleared ' + label); };
+});
+$('source').onchange = refreshCounts;
+$('inputMode').onchange = () => { const c = counts(); if(c.mask + c.nomask + c.wrong > 0) toast('Mode changed – re-record samples in this mode for best accuracy.', 4000); };
+$('threshold').oninput = e => $('thVal').textContent = e.target.value;
+
+/* ---- save / load / export / import of the trained model ---- */
+function f32ToB64(f32){
+  const b = new Uint8Array(f32.buffer, f32.byteOffset, f32.byteLength); let s = '';
+  for(let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+function b64ToF32(str){ const s = atob(str), u = new Uint8Array(s.length); for(let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return new Float32Array(u.buffer); }
+function exportData(){
+  const ds = S.knn.getClassifierDataset(), out = { v:3, input:$('inputMode').value, feat:S.feat, classes:{} };
+  Object.keys(ds).forEach(k => { out.classes[k] = { shape:ds[k].shape, b64:f32ToB64(ds[k].dataSync()) }; });
+  return out;
+}
+function importData(obj){
+  const feat = obj.feat || 'mobilenet';
+  if(feat === 'mobilenet' && !S.net){ toast('That model needs MobileNet, which is not downloaded. Use Quick setup (Lite) instead.', 5000); return false; }
+  S.feat = feat; $('featMode').value = feat;
+  S.knn = knnClassifier.create(); const ds = {};
+  Object.keys(obj.classes).forEach(k => { const c = obj.classes[k]; ds[k] = tf.tensor(b64ToF32(c.b64), c.shape); });
+  S.knn.setClassifierDataset(ds); if(obj.input) $('inputMode').value = obj.input;
+  $('source').value = 'knn'; refreshCounts(); return true;
+}
+$('btnSave').onclick = () => {
+  if(!modelReady()){ toast('Record at least 10 samples of Mask and No mask first.'); return; }
+  try{ localStorage.setItem('maskPro_v2', JSON.stringify(exportData())); toast('Saved in this browser ✔'); }
+  catch(e){ toast('Browser storage full – use “Export file” instead.'); }
+};
+$('btnLoad').onclick = () => {
+  const raw = localStorage.getItem('maskPro_v2'); if(!raw){ toast('Nothing saved yet.'); return; }
+  try{ if(importData(JSON.parse(raw))) toast('Saved model loaded ✔'); }catch(e){ toast('Saved data is corrupted.'); }
+};
+$('btnExport').onclick = () => {
+  if(!modelReady()){ toast('Nothing to export yet.'); return; }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(exportData())], { type:'application/json' }));
+  a.download = 'mask-model.json'; a.click(); URL.revokeObjectURL(a.href);
+};
+$('btnImport').onclick = () => $('fileImport').click();
+$('fileImport').onchange = e => {
+  const f = e.target.files[0]; if(!f) return; const r = new FileReader();
+  r.onload = () => { try{ if(importData(JSON.parse(r.result))) toast('Model imported ✔'); }catch(err){ toast('Not a valid model file.'); } };
+  r.readAsText(f); e.target.value = '';
+};
+
+/* =========================== Teachable Machine =========================== */
+$('btnTM').onclick = async () => {
+  let url = $('tmUrl').value.trim(); if(!url){ toast('Paste your model URL first.'); return; }
+  if(!url.endsWith('/')) url += '/';
+  try{
+    setStatus('Loading Teachable Machine model…');
+    const model = await tf.loadLayersModel(url + 'model.json');
+    const meta = await (await fetch(url + 'metadata.json')).json();
+    const size = model.inputs[0].shape[1] || 224;
+    S.tm = { model, labels:meta.labels || [], size }; $('source').value = 'tm'; refreshCounts();
+    setStatus('Teachable Machine model loaded ✔ (classes: ' + S.tm.labels.join(', ') + ')'); toast('Model loaded ✔');
+  }catch(e){ console.error(e); setStatus('Could not load that URL – is the model uploaded/shared?'); toast('Could not load model.'); }
+};
+
+/* =========================== start / pause detection =========================== */
+function toggleDetect(){
+  if(S.running){ S.running = false; $('btnDetect').textContent = '▶ Start detection'; msg('idle', 'Detection paused.'); setGate('idle'); return; }
+  if(!S.stream){ toast('Start the camera first.'); return; }
+  if(!modelReady()){ toast('Train ≥10 samples of Mask and No mask, or load a Teachable Machine model.', 3800); return; }
+  S.running = true; $('btnDetect').textContent = '⏸ Pause detection';
+}
+$('btnDetect').onclick = toggleDetect;
+document.addEventListener('keydown', e => {
+  if(/INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
+  if(e.code === 'Space'){ e.preventDefault(); toggleDetect(); }
+  else if(e.key === 's' || e.key === 'S') snapshot();
+  else if(e.key === 'f' || e.key === 'F') $('btnFull').click();
+});
+
+/* =========================== dashboard / log / CSV =========================== */
+function addLog(state, text){
+  const row = { time:new Date(), state, text }; S.log.push(row); if(S.log.length > 1000) S.log.shift();
+  const d = document.createElement('div'); d.className = 's-' + state;
+  d.innerHTML = `${row.time.toLocaleTimeString()} &nbsp;<b>${state === 'info' ? 'INFO' : NAMES[state]}</b> &nbsp;${text}`;
+  const box = $('log'); box.prepend(d); while(box.children.length > 60) box.removeChild(box.lastChild);
+}
+function refreshStats(){
+  const s = S.stats, total = s.mask + s.nomask + s.wrong;
+  $('sMask').textContent = s.mask; $('sNo').textContent = s.nomask; $('sWrong').textContent = s.wrong;
+  $('sRate').textContent = total ? Math.round(s.mask / total * 100) + '%' : '–';
+}
+setInterval(() => { const sec = Math.floor((Date.now() - S.t0) / 1000);
+  $('sTime').textContent = String(Math.floor(sec / 60)).padStart(2, '0') + ':' + String(sec % 60).padStart(2, '0'); }, 1000);
+$('btnClearStats').onclick = () => { S.stats = { mask:0, nomask:0, wrong:0 }; S.log = []; S.t0 = Date.now(); $('log').innerHTML = ''; $('gallery').innerHTML = ''; refreshStats(); };
+$('btnCsv').onclick = () => {
+  const rows = ['time,event,details'].concat(S.log.map(r => `${r.time.toISOString()},${r.state},"${r.text}"`));
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([rows.join('\n')], { type:'text/csv' }));
+  a.download = 'mask-detection-log.csv'; a.click(); URL.revokeObjectURL(a.href);
+};
+function addViolation(state){
+  const fig = document.createElement('figure'), img = document.createElement('img');
+  img.src = view.toDataURL('image/jpeg', 0.6);
+  fig.appendChild(img); fig.appendChild(document.createTextNode(new Date().toLocaleTimeString() + ' · ' + NAMES[state]));
+  const g = $('gallery'); g.prepend(fig); while(g.children.length > 8) g.removeChild(g.lastChild);
+}
+/* =========================== feature extraction (Lite pixels  OR  MobileNet) =========================== */
+function features(canvas){
+  if(S.feat === 'mobilenet' && S.net) return S.net.infer(canvas, true);          // [1, N] embedding
+  return tf.tidy(() => {                                                          // Lite: 24×24 RGB, normalised
+    const x = tf.image.resizeBilinear(tf.browser.fromPixels(canvas).toFloat(), [24, 24]).flatten();
+    const c = x.sub(x.mean());
+    return c.div(c.norm().add(1e-6)).reshape([1, -1]);
+  });
+}
+function totalSamples(){ const c = counts(); return c.mask + c.nomask + c.wrong; }
+function hasSaved(){ try{ return !!localStorage.getItem('maskPro_v2'); }catch(e){ return false; } }
+
+async function loadMobilenet(){
+  const tries = [ { version:2, alpha:1.0, ms:90000, name:'MobileNet v2' }, { version:1, alpha:0.25, ms:60000, name:'MobileNet-lite' } ];
+  for(const t of tries){
+    const start = Date.now();
+    const tick = setInterval(() => $('featHint').textContent = `Downloading ${t.name}… ${Math.round((Date.now() - start) / 1000)}s (Lite mode works meanwhile)`, 1000);
+    try{
+      S.net = await withTimeout(mobilenet.load({ version:t.version, alpha:t.alpha }), t.ms, t.name);
+      clearInterval(tick); $('featHint').textContent = t.name + ' ready ✔';
+      if(totalSamples() === 0 && !hasSaved()){ S.feat = 'mobilenet'; $('featMode').value = 'mobilenet'; refreshCounts(); }
+      tryAutoLoad(); return;
+    }catch(e){ clearInterval(tick); console.warn(e); }
+  }
+  $('featHint').textContent = 'MobileNet could not be downloaded on this network – Lite mode is active and works fully.';
+}
+function tryAutoLoad(){                                  // reload the model you saved last time
+  if(S.autoLoaded || !hasSaved() || totalSamples() > 0) return;
+  try{
+    const obj = JSON.parse(localStorage.getItem('maskPro_v2'));
+    if((obj.feat || 'mobilenet') === 'mobilenet' && !S.net) return;     // wait for MobileNet
+    if(importData(obj)){ S.autoLoaded = true; toast('Loaded your saved model ✔ – press Start detection'); }
+  }catch(e){}
+}
+$('featMode').onchange = e => {
+  const v = e.target.value;
+  if(v === S.feat) return;
+  if(v === 'mobilenet' && !S.net){ toast('MobileNet is not downloaded (yet) – staying in Lite mode.'); e.target.value = S.feat; return; }
+  if(totalSamples() > 0 && !confirm('Changing the feature extractor clears your recorded samples. Continue?')){ e.target.value = S.feat; return; }
+  S.feat = v; S.knn = knnClassifier.create(); KEYS.forEach(k => $(THUMB[k]).innerHTML = ''); refreshCounts();
+};
+
+/* =========================== Quick setup wizard (guided capture) =========================== */
+async function wizard(){
+  if(S.recording) return;
+  if(!S.stream){ await startCamera(); if(!S.stream) return; }
+  if(S.running) toggleDetect();
+  const steps = [ ['nomask', 'Step 1 – take your mask OFF and look at the camera'],
+                  ['mask',   'Step 2 – put your mask ON (nose + mouth covered)'] ];
+  if($('wizWrong').checked) steps.push(['wrong', 'Step 3 – wear the mask INCORRECTLY (under the nose / on the chin)']);
+  S.recording = true; $('btnWizard').disabled = true;
+  try{
+    for(const [label, text] of steps){
+      for(let i = 5; i > 0; i--){ msg('unsure', text + ' — starting in ' + i + '…'); await sleep(1000); }
+      const total = 80; let ok = 0;
+      for(let i = 0; i < total; i++){
+        const ph = i < total / 3 ? 'look straight' : i < 2 * total / 3 ? 'turn your head slowly left and right' : 'move a little closer, then back';
+        msg('unsure', text + ' — recording ' + Math.round(i / total * 100) + '% · ' + ph);
+        if(captureOnce(label)) ok++;
+        refreshCounts(); await sleep(100);
+      }
+      if(ok < total * 0.5){ msg('unsure', 'Your face was not seen in many frames – improve the light, face the camera, then run Quick setup again.'); return; }
+    }
+    msg('mask', '✔ Training finished – starting detection…'); await sleep(900);
+    if(!S.running) toggleDetect();
+  } finally { S.recording = false; $('btnWizard').disabled = false; }
+}
+$('btnWizard').onclick = wizard;
+
+/* =========================== train from photos on your computer =========================== */
+function loadImg(file){ return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = URL.createObjectURL(file); }); }
+async function addPhotos(label, files){
+  let ok = 0;
+  for(const file of files){
+    try{
+      const img = await loadImg(file), w = img.naturalWidth, h = img.naturalHeight; let f = null;
+      if(S.detector && $('inputMode').value === 'face'){
+        const found = await S.detector.estimateFaces(img, false); let ba = 0;
+        for(const d of found){ const a = (d.bottomRight[0] - d.topLeft[0]) * (d.bottomRight[1] - d.topLeft[1]);
+          if(a > ba){ ba = a; f = { topLeft:Array.from(d.topLeft), bottomRight:Array.from(d.bottomRight) }; } }
+      }
+      if(!f){ const s = Math.min(w, h); f = { topLeft:[(w - s) / 2, (h - s) / 2], bottomRight:[(w + s) / 2, (h + s) / 2], exact:true }; }
+      for(const fl of ($('augment').checked ? [false, true] : [false])){
+        cropFace(f, cropB, fl, img); tf.tidy(() => S.knn.addExample(features(cropB), label));
+      }
+      addThumb(label); ok++; URL.revokeObjectURL(img.src);
+    }catch(e){ console.error(e); }
+  }
+  refreshCounts(); toast('Added ' + ok + ' of ' + files.length + ' photos to “' + label + '”');
+}
+[['mask', 'phMask'], ['nomask', 'phNo'], ['wrong', 'phWrong']].forEach(([label, id]) => {
+  $(id).onclick = () => { S.photoLabel = label; $('photoIn').click(); };
+});
+$('photoIn').onchange = async e => { const files = Array.from(e.target.files); e.target.value = ''; if(files.length) await addPhotos(S.photoLabel, files); };
+
+refreshCounts(); refreshStats();
+</script>
+</body>
+</html>
